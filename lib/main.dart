@@ -119,7 +119,7 @@ class MyApp extends ConsumerWidget {
           title: 'Bujuan',
           themeMode: themeMode,
           darkTheme: AppTheme.dark,
-          showPerformanceOverlay: true,
+          showPerformanceOverlay: false,
           debugShowCheckedModeBanner: false,
           theme: AppTheme.light,
           routerConfig: router,
