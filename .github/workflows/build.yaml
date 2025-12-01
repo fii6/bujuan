@@ -1,82 +1,142 @@
-name: Build Android APK
+name: Build Android & iOS
 
 on:
-  push:
-    branches:
-      - feature/new-ui
   workflow_dispatch:
+  release:
+    types: [released]
 
 jobs:
-  build-apk:
+  build-android:
     runs-on: ubuntu-latest
-    env:
-      FLUTTER_CHANNEL: "stable"
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-      - name: Cache Flutter SDK (toolchain) directory
-        uses: actions/cache@v4
+      - name: Checkout bujuan_music_api
+        uses: actions/checkout@v3
         with:
-          path: |
-            ~/.flutter-sdk
-          key: ${{ runner.os }}-flutter-sdk-${{ env.FLUTTER_CHANNEL }}-${{ hashFiles('**/pubspec.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-flutter-sdk-${{ env.FLUTTER_CHANNEL }}-
+          repository: 2697a/bujuan_music_api
+          path: bujuan_music_api
+          
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
 
-      - name: Setup Java (for Gradle)
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '11'
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: stable
-          channel: ${{ env.FLUTTER_CHANNEL }}
+          flutter-version: '3.x'
+          channel: 'stable'
 
-      - name: Cache pub packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.pub-cache
-            .pub-cache
-          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pub-
-
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
-      - name: Flutter pub get
+      - name: Get dependencies
         run: flutter pub get
 
-      - name: (Optional) Setup Android keystore from secrets
-        if: ${{ secrets.KEYSTORE_BASE64 != '' && secrets.KEYSTORE_BASE64 != null }}
-        run: |
-          echo "Decoding keystore..."
-          mkdir -p android/app
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/keystore.jks
-          echo "storePassword=${{ secrets.KEYSTORE_PASSWORD }}" >> android/keystore.properties || true
-          echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> android/keystore.properties || true
-          echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> android/keystore.properties || true
-          echo "storeFile=keystore.jks" >> android/keystore.properties || true
+      - name: Build APK
+        run: flutter build apk --release
 
-      - name: Build release APK
-        # 如果你的仓库需要 flavors 或特殊参数，请修改下面命令
-        run: |
-          flutter build apk --release
+      - name: Print Folder Tree
+        uses: jaywcjlove/github-action-folder-tree@main
+        with:
+            exclude: "node_modules|dist|.git|.husky"
+            path: ./build
+            depth: 10
 
-      - name: Upload artifact - APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: bujuan-release-apk
-          path: build/app/outputs/flutter-apk/*.apk
+          name: android-release
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+#  build-ios:
+#    runs-on: macos-latest
+#    steps:
+#      - uses: actions/checkout@v3
+#
+#      
+#      - name: Checkout bujuan_music_api
+#        uses: actions/checkout@v3
+#        with:
+#          repository: 2697a/bujuan_music_api
+#          path: bujuan_music_api
+#
+#      - name: Setup Rust
+#        uses: dtolnay/rust-toolchain@stable
+#
+#      - name: Setup Flutter
+#        uses: subosito/flutter-action@v2
+#        with:
+#          flutter-version: '3.x'
+#          channel: 'stable'
+#
+#      - name: Get dependencies
+#        run: flutter pub get
+#
+#      - name: Build iOS
+#        run: flutter build ios --release --no-codesign
+#
+#      - name: Print Folder Tree
+#        uses: jaywcjlove/github-action-folder-tree@main
+#        with:
+#            exclude: "node_modules|dist|.git|.husky"
+#            path: ./build
+#            depth: 10
+#
+#      - name: Pack IPA
+#        run: |
+#          cd build/ios/iphoneos
+#          mkdir Payload
+#          cp -r Runner.app Payload
+#          zip -r app.ipa Payload
+#          
+#      - name: Upload IPA
+#        uses: actions/upload-artifact@v4
+#        with:
+#          name: ios-release
+#          path: build/ios/iphoneos/app.ipa 
+#
+  release:
+    name: Release
+    needs: [build-android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag the repository (pre-release)
+        if: github.event_name != 'release' || github.event.action != 'created'
+        id: tag
+        run: |
+          TAG=nightly.$(date -Iseconds | sed 's/[T:\+]/-/g')
+          TIME=$(date '+%Y/%m/%d %H:%M')
+          echo "$TAG"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "time=$TIME" >> $GITHUB_OUTPUT
+          git config --global user.name "${GITHUB_ACTOR}"
+          git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+          git tag -a $TAG -m "Published version $TAG" ${GITHUB_SHA}
+          git push origin $TAG
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release (pre-release)
+        uses: softprops/action-gh-release@v2
+        if: github.event_name != 'release' || github.event.action != 'created'
+        with:
+          files: artifacts/*/*
+          prerelease: true
+          make_latest: false
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.time }}
+
+      - name: Create release (release)
+        uses: softprops/action-gh-release@v2
+        if: github.event_name == 'release' && github.event.action == 'created'
+        with:
+          files: artifacts/*/*
+          prerelease: false
+          make_latest: true
