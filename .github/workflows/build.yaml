@@ -1,0 +1,82 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - feature/new-ui
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    env:
+      FLUTTER_CHANNEL: "stable"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cache Flutter SDK (toolchain) directory
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.flutter-sdk
+          key: ${{ runner.os }}-flutter-sdk-${{ env.FLUTTER_CHANNEL }}-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-flutter-sdk-${{ env.FLUTTER_CHANNEL }}-
+
+      - name: Setup Java (for Gradle)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: stable
+          channel: ${{ env.FLUTTER_CHANNEL }}
+
+      - name: Cache pub packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            .pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: (Optional) Setup Android keystore from secrets
+        if: ${{ secrets.KEYSTORE_BASE64 != '' && secrets.KEYSTORE_BASE64 != null }}
+        run: |
+          echo "Decoding keystore..."
+          mkdir -p android/app
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/keystore.jks
+          echo "storePassword=${{ secrets.KEYSTORE_PASSWORD }}" >> android/keystore.properties || true
+          echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> android/keystore.properties || true
+          echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> android/keystore.properties || true
+          echo "storeFile=keystore.jks" >> android/keystore.properties || true
+
+      - name: Build release APK
+        # 如果你的仓库需要 flavors 或特殊参数，请修改下面命令
+        run: |
+          flutter build apk --release
+
+      - name: Upload artifact - APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: bujuan-release-apk
+          path: build/app/outputs/flutter-apk/*.apk
